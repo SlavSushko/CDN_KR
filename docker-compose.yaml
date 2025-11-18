@@ -1,0 +1,40 @@
+services:
+  origin:
+    build: ./origin
+    ports:
+      - "8080:80"
+    networks:
+      - cdn-net
+
+  edge1:
+    build: ./edge
+    depends_on:
+      - origin
+    ports:
+      - "8081:80"
+    networks:
+      - cdn-net
+
+  edge2:
+    build: ./edge
+    depends_on:
+      - origin
+    ports:
+      - "8082:80"
+    networks:
+      - cdn-net
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    depends_on:
+      - origin
+    networks:
+      - cdn-net
+
+networks:
+  cdn-net:
+    driver: bridge
