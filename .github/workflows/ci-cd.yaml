@@ -1,0 +1,15 @@
+name: CI/CD for CDN
+on: [push]
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and Test
+        run: |
+          docker compose build
+          docker compose up -d
+          curl -f http://localhost:8081 || exit 1
+          docker compose down
+      - name: Simulate Deploy
+        run: docker stack deploy -c docker-compose.yaml cdn_stack
