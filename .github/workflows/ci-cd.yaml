@@ -66,7 +66,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          timeout: 120000
+          timeout: 120000ms
           script: |
             set -euo pipefail
             cd /path/to/cdn-project || exit 1
@@ -90,7 +90,7 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          timeout: 120000
+          timeout: 120000ms
           script: |
             cd /path/to/cdn-project
             ./scripts/swarm-test.sh
