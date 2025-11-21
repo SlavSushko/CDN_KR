@@ -1,28 +1,39 @@
+echo "Проверка бинарников..."
+command -v docker >/dev/null || { echo "Docker не установлен"; exit 1; }
+command -v git >/dev/null || { echo "Git не установлен"; exit 1; }
 
-if ! command -v git &> /dev/null; then
-    echo "Ошибка: Git не установлен. Установите Git и попробуйте снова."
-    exit 1
+echo "Получение обновлений..."
+git pull origin master || continue
+
+echo "Сборка Docker-образов..."
+docker build -t origin-img ./origin || exit 1
+docker build -t edge-img ./edge || exit 1
+
+echo "Остановка compose окружения..."
+docker compose down || true
+
+echo "Проверка режима Swarm..."
+if ! docker info | grep -q "Swarm: active"; then
+    echo "Swarm не активен — активирую"
+    docker swarm init || exit 1
 fi
 
-if ! command -v docker &> /dev/null; then
-    echo "Ошибка: Docker не установлен. Установите Docker и попробуйте снова."
-    exit 1
-fi
+echo "Удаление старого стека..."
+docker stack rm cdn_stack || true
+sleep 5
 
-echo "Pull обновлений из Git..."
-git pull origin main || { echo "Ошибка git pull. Проверьте repo."; exit 1; }
+echo "Подготовка overlay-сети cdn-net..."
+docker network rm cdn-net >/dev/null 2>&1 || true
+docker network create --driver=overlay --attachable cdn-net || true
+sleep 2
 
-echo "Остановка существующих контейнеров..."
-docker compose down || { echo "Ошибка docker compose down. Продолжаем..."; }
+echo "Деплой нового стека..."
+docker stack deploy -c stack.yaml cdn_stack || exit 1
 
-echo "Сборка и запуск системы..."
-docker compose up -d --build || { echo "Ошибка docker compose up. Проверьте yaml."; exit 1; }
+echo "Ожидание запуска сервисов..."
+sleep 10
 
-echo "Деплой в Swarm..."
-docker stack deploy -c docker-compose.yaml cdn_stack || { echo "Ошибка stack deploy."; exit 1; }
+echo "Проверка edge1..."
+curl -f http://localhost:8081 || { echo "Edge1 недоступен"; exit 1; }
 
-echo "Тестирование деплоя..."
-curl -f http://localhost:8081 || { echo "Тест failed: Edge не доступен."; exit 1; }
-echo "Деплой успешен! Система запущена на localhost:8081."
-
-exit 0
+echo "Готово! Swarm запущен."

@@ -1,0 +1,131 @@
+version: "3.8"
+
+networks:
+  cdn-net:
+    external: true
+
+configs:
+  prometheus_scfg:
+    file: ./prometheus/prometheus-swarm.yml
+
+services:
+  origin:
+    image: origin-img:latest
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    ports:
+      - target: 80
+        published: 8080
+        protocol: tcp
+        mode: host
+    networks:
+      - cdn-net
+
+  edge1:
+    image: edge-img:latest
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    ports:
+      - target: 80
+        published: 8081
+        protocol: tcp
+        mode: host
+    networks:
+      - cdn-net
+
+  edge2:
+    image: edge-img:latest
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    ports:
+      - target: 80
+        published: 8082
+        protocol: tcp
+        mode: host
+    networks:
+      - cdn-net
+
+  redis:
+    image: redis:latest
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    ports:
+      - target: 6379
+        published: 6379
+        mode: host
+    networks:
+      - cdn-net
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+    configs: []
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+    networks:
+      - cdn-net
+
+  swarm-exporter:
+    image: dockerswarmexporter/dockerswarm-exporter:latest
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - cdn-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    configs:
+      - source: prometheus_scfg
+        target: /etc/prometheus/prometheus.yml
+    ports:
+      - target: 9090
+        published: 9090
+        protocol: tcp
+        mode: host
+    networks:
+      - cdn-net
+    depends_on:
+      - node-exporter
+      - swarm-exporter
+
+  grafana:
+    image: grafana/grafana:latest
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+    ports:
+      - target: 3000
+        published: 3000
+        protocol: tcp
+        mode: host
+    networks:
+      - cdn-net
+    depends_on:
+      - prometheus
+

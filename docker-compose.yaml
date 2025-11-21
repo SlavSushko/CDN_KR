@@ -1,6 +1,10 @@
+version: "3.8"
+
 services:
   origin:
     build: ./origin
+    image: origin-img:local
+    container_name: origin
     ports:
       - "8080:80"
     networks:
@@ -8,6 +12,8 @@ services:
 
   edge1:
     build: ./edge
+    image: edge-img:local
+    container_name: edge1
     depends_on:
       - origin
     ports:
@@ -17,21 +23,61 @@ services:
 
   edge2:
     build: ./edge
+    image: edge-img:local
+    container_name: edge2
     depends_on:
       - origin
     ports:
       - "8082:80"
     networks:
       - cdn-net
+
   redis:
     image: redis:latest
-    ports:
-      - "6379:6379"
+    container_name: redis
     volumes:
       - ./redis/redis.conf:/usr/local/etc/redis/redis.conf
-    command: redis-server /usr/local/etc/redis/redis.conf
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    ports:
+      - "6379:6379"
+    networks:
+      - cdn-net
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: cadvisor
+    restart: unless-stopped
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    ports:
+      - "8085:8080"
+    networks:
+      - cdn-net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus/prometheus-compose.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
     depends_on:
-      - origin
+      - cadvisor
+    networks:
+      - cdn-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin   # для локального запуска, можно менять
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
     networks:
       - cdn-net
 
