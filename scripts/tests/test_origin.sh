@@ -1,9 +1,13 @@
 #!/bin/sh
 set -e
-
-echo "[TEST] Origin server"
-
-CID=$(docker run -d -p 0:80 origin-img:latest)
+IMAGE="$1"
+if [ -z "$IMAGE" ]; then
+  echo "Error: Image name required as argument"
+  exit 1
+fi
+echo "[TEST] Origin server with $IMAGE"
+CID=$(docker run -d -p 0:80 "$IMAGE")
+# ... остальной код ...
 if [ -z "$CID" ]; then
   echo "Error: Unable to start origin container"
   exit 1

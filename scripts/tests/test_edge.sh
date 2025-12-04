@@ -1,9 +1,13 @@
 #!/bin/sh
 set -e
-
-echo "[TEST] Edge server"
-
-CID=$(docker run -d -p 0:80 edge-img:latest)
+IMAGE="$1"
+if [ -z "$IMAGE" ]; then
+  echo "Error: Image name required as argument"
+  exit 1
+fi
+echo "[TEST] Edge server with $IMAGE"
+CID=$(docker run -d -p 0:80 "$IMAGE")
+# ... остальной код ...
 if [ -z "$CID" ]; then
   echo "Error: Unable to start edge container"
   exit 1
