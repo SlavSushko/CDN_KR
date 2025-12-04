@@ -1,26 +1,48 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -e
 
-IMAGE=${1:-cdn-origin:local}
+echo "[TEST] Origin server"
 
-echo "== Test origin image: $IMAGE =="
-
-# run container on ephemeral port and check index.html or root returns 200
-CID=$(docker run -d -p 0:80 --rm $IMAGE || true)
-# If docker run failed because port mapping with 0 not supported, fallback without port forward
-if [ -z "${CID}" ]; then
-  CID=$(docker run -d --rm $IMAGE)
-  sleep 1
-  # try to curl inside container
-  docker exec "$CID" sh -c "curl -sS -o /tmp/out.html http://localhost:80 || true"
-  docker exec "$CID" sh -c "grep -q '<!DOCTYPE html>' /tmp/out.html && echo 'origin returned HTML' || echo 'origin content missing'; exit 0"
-  docker rm -f "$CID" >/dev/null 2>&1 || true
-  exit 0
+CID=$(docker run -d -p 0:80 origin-img:latest)
+if [ -z "$CID" ]; then
+  echo "Error: Unable to start origin container"
+  exit 1
 fi
 
-# get mapped port
-HOST_PORT=$(docker port $CID 80 | sed -n 's/.*:\([0-9]*\)$/\1/p')
+# Retry loop for port detection
+TRY=0
+HOST_PORT=""
+while [ $TRY -lt 5 ]; do
+  HOST_PORT=$(docker port $CID 80 | sed -n 's/.*:\([0-9]*\)$/\1/p')
+  if [ -n "$HOST_PORT" ]; then break; fi
+  TRY=$((TRY+1))
+  sleep 1
+done
+
+if [ -z "$HOST_PORT" ]; then
+  echo "Error: Could not detect mapped port for Origin container."
+  echo "docker port output:"
+  docker port "$CID" || true
+  docker logs "$CID" || true
+  docker rm -f "$CID" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+echo "Origin mapped to port: $HOST_PORT"
+
 sleep 1
-curl -fsS "http://localhost:${HOST_PORT}" | head -n 5
+
+RESPONSE=$(curl -fsS "http://localhost:${HOST_PORT}" | head -n 5)
+
+if [ -z "$RESPONSE" ]; then
+  echo "Error: Origin server returned empty response"
+  docker logs "$CID" || true
+  docker rm -f "$CID" >/dev/null 2>&1 || true
+  exit 1
+fi
+
+echo "Origin response OK"
+echo "$RESPONSE"
+
 docker rm -f "$CID" >/dev/null 2>&1 || true
-echo "Origin image test OK"
+exit 0
