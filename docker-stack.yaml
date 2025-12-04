@@ -10,7 +10,7 @@ configs:
 
 services:
   origin:
-    image: origin-img:latest
+    image: slavsushko/cdn-origin:latest   # <-- обновлено
     deploy:
       replicas: 1
       restart_policy:
@@ -24,7 +24,7 @@ services:
       - cdn-net
 
   edge1:
-    image: edge-img:latest
+    image: slavsushko/cdn-edge:latest     # <-- обновлено
     deploy:
       replicas: 1
       restart_policy:
@@ -38,7 +38,7 @@ services:
       - cdn-net
 
   edge2:
-    image: edge-img:latest
+    image: slavsushko/cdn-edge:latest     # <-- обновлено
     deploy:
       replicas: 1
       restart_policy:
@@ -70,7 +70,6 @@ services:
       mode: global
       restart_policy:
         condition: on-failure
-    configs: []
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
@@ -128,4 +127,3 @@ services:
       - cdn-net
     depends_on:
       - prometheus
-
