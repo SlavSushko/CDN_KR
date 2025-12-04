@@ -7,46 +7,29 @@ if [ -z "$IMAGE" ]; then
 fi
 echo "[TEST] Origin server with $IMAGE"
 CID=$(docker run -d -p 0:80 "$IMAGE")
-# ... остальной код ...
 if [ -z "$CID" ]; then
   echo "Error: Unable to start origin container"
   exit 1
 fi
-
-# Retry loop for port detection
-TRY=0
-HOST_PORT=""
-while [ $TRY -lt 5 ]; do
-  HOST_PORT=$(docker port $CID 80 | sed -n 's/.*:\([0-9]*\)$/\1/p')
-  if [ -n "$HOST_PORT" ]; then break; fi
-  TRY=$((TRY+1))
-  sleep 1
-done
-
-if [ -z "$HOST_PORT" ]; then
-  echo "Error: Could not detect mapped port for Origin container."
-  echo "docker port output:"
-  docker port "$CID" || true
+# Use docker inspect for reliable port extraction
+HOST_PORT=$(docker inspect --format '{{ (index (index .NetworkSettings.Ports "80/tcp") 0).HostPort }}' "$CID")
+if [ -z "$HOST_PORT" ] || ! echo "$HOST_PORT" | grep -qE '^[0-9]+$'; then
+  echo "Error: Could not detect valid mapped port for Origin container."
   docker logs "$CID" || true
   docker rm -f "$CID" >/dev/null 2>&1 || true
   exit 1
 fi
-
 echo "Origin mapped to port: $HOST_PORT"
-
-sleep 1
-
-RESPONSE=$(curl -fsS "http://localhost:${HOST_PORT}" | head -n 5)
-
+sleep 2  # Increased sleep for container readiness
+URL="http://localhost:${HOST_PORT}/"
+RESPONSE=$(curl -fsS -v "$URL" 2>&1 | head -n 5)  # Added -v for verbose debug
 if [ -z "$RESPONSE" ]; then
   echo "Error: Origin server returned empty response"
   docker logs "$CID" || true
   docker rm -f "$CID" >/dev/null 2>&1 || true
   exit 1
 fi
-
 echo "Origin response OK"
 echo "$RESPONSE"
-
 docker rm -f "$CID" >/dev/null 2>&1 || true
 exit 0
