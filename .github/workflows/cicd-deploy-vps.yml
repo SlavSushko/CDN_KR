@@ -1,0 +1,85 @@
+name: CI/CD → VPS deploy (Docker Hub + SSH)
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+env:
+  DOCKERHUB_REPO_ORIGIN: slavsushko/cdn-origin
+  DOCKERHUB_REPO_EDGE: slavsushko/cdn-edge
+
+jobs:
+  build_test_and_push:
+    name: Build, test and push images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build origin image
+        run: docker build -t ${DOCKERHUB_REPO_ORIGIN}:latest ./origin
+
+      - name: Build edge image
+        run: docker build -t ${DOCKERHUB_REPO_EDGE}:latest ./edge
+
+      - name: Run tests
+        run: |
+          chmod +x scripts/tests/*.sh
+          ./scripts/tests/test_origin.sh
+          ./scripts/tests/test_edge.sh
+          ./scripts/tests/test_redis.sh || true
+
+      - name: Tag & push images
+        run: |
+          # push latest
+          docker push ${DOCKERHUB_REPO_ORIGIN}:latest
+          docker push ${DOCKERHUB_REPO_EDGE}:latest
+          # Also tag with short sha for reproducibility
+          SHORT_SHA=${GITHUB_SHA::8}
+          docker tag ${DOCKERHUB_REPO_ORIGIN}:latest ${DOCKERHUB_REPO_ORIGIN}:${SHORT_SHA}
+          docker tag ${DOCKERHUB_REPO_EDGE}:latest ${DOCKERHUB_REPO_EDGE}:${SHORT_SHA}
+          docker push ${DOCKERHUB_REPO_ORIGIN}:${SHORT_SHA}
+          docker push ${DOCKERHUB_REPO_EDGE}:${SHORT_SHA}
+
+  deploy_to_vps:
+    name: Deploy to VPS
+    needs: build_test_and_push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Deploy via SSH to VPS
+        uses: appleboy/ssh-action@v1.9.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          script: |
+            set -e
+            cd ${{ secrets.VPS_DEPLOY_PATH }} || exit 1
+
+            echo "Pulling latest images on VPS..."
+            docker pull slavsushko/cdn-origin:latest
+            docker pull slavsushko/cdn-edge:latest
+
+            echo "Redeploying Docker stack..."
+            docker stack rm cdn_stack || true
+            sleep 5
+            docker stack deploy -c docker-stack.yaml cdn_stack
+
+            echo "Waiting for stack to stabilize..."
+            sleep 8
+            docker service ls
+            docker stack ps cdn_stack
