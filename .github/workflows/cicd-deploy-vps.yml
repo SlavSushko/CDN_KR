@@ -35,9 +35,10 @@ jobs:
       - name: Run tests
         run: |
           chmod +x scripts/tests/*.sh
-          ./scripts/tests/test_origin.sh
-          ./scripts/tests/test_edge.sh
+          ./scripts/tests/test_origin.sh "${DOCKERHUB_REPO_ORIGIN}:latest"
+          ./scripts/tests/test_edge.sh "${DOCKERHUB_REPO_EDGE}:latest"
           ./scripts/tests/test_redis.sh || true
+
 
       - name: Tag & push images
         run: |
