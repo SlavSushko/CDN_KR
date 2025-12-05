@@ -84,13 +84,13 @@ jobs:
     name: Deploy to VPS
     needs: build_test_and_push
     runs-on: ubuntu-latest
-
+    
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-
+    
       - name: Deploy via SSH to VPS
-        uses: appleboy/ssh-action@v1.9.0
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
@@ -98,21 +98,20 @@ jobs:
           port: 22
           script: |
             set -e
-
-            cd ${{ secrets.VPS_DEPLOY_PATH }} || exit 1
-
-            echo "Pulling latest images..."
+            
+            echo "Switch to deploy directory..."
+            cd ${{ secrets.VPS_DEPLOY_PATH }}
+        
+            echo "Pull updated Docker images..."
             docker pull slavsushko/cdn-origin:latest
             docker pull slavsushko/cdn-edge:latest
-
-            echo "Redeploying swarm stack..."
+        
+            echo "Redeploying stack..."
             docker stack rm cdn_stack || true
             sleep 5
-
             docker stack deploy -c docker-stack.yaml cdn_stack
-
-            echo "Waiting for services..."
-            sleep 10
-
+        
+            echo "Services status:"
+            sleep 8
             docker service ls
             docker stack ps cdn_stack
