@@ -10,7 +10,8 @@ configs:
 
 services:
   origin:
-    image: slavsushko/cdn-origin:latest   # <-- обновлено
+    image: image: ${DOCKERHUB_REPO_ORIGIN}:latest
+   # <-- обновлено
     deploy:
       replicas: 1
       restart_policy:

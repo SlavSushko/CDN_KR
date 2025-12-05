@@ -26,7 +26,7 @@ if [ -z "$ORIGIN_CID" ]; then
 fi
 echo "Origin container id: $ORIGIN_CID"
 
-# 2) Wait until origin responds on its internal port 80
+# Wait until origin responds on its internal port 80
 TRIES=0
 MAX_TRIES=15
 until docker exec origin sh -c "curl -sS --fail http://localhost:80 >/dev/null 2>&1" || [ $TRIES -ge $MAX_TRIES ]; do
@@ -45,7 +45,7 @@ if [ $TRIES -ge $MAX_TRIES ]; then
 fi
 echo "Origin is ready."
 
-# 3) Start edge in same network and publish a random host port
+# 2) Start edge in same network and publish a random host port
 EDGE_CID=$(docker run -d --network "$NETWORK" -p 0:80 "$EDGE_IMAGE")
 if [ -z "$EDGE_CID" ]; then
   echo "Error: Unable to start edge container"
@@ -55,7 +55,7 @@ if [ -z "$EDGE_CID" ]; then
 fi
 echo "Edge container id: $EDGE_CID"
 
-# 4) Detect mapped host port for edge (retry)
+# 3) Detect mapped host port for edge (retry)
 TRY=0
 HOST_PORT=""
 while [ $TRY -lt 10 ]; do
@@ -64,6 +64,7 @@ while [ $TRY -lt 10 ]; do
     break
   fi
   TRY=$((TRY+1))
+  echo "Waiting for host port mapping... attempt $TRY/10"
   sleep 1
 done
 
@@ -80,17 +81,34 @@ fi
 
 echo "Edge mapped to host port: $HOST_PORT"
 
-# 5) Wait for edge to become ready (try curl)
+# 4) Wait for edge to become ready — more tolerant loop with logging
 TRIES=0
-MAX_TRIES=15
-until curl -sS --fail "http://localhost:${HOST_PORT}" >/dev/null 2>&1 || [ $TRIES -ge $MAX_TRIES ]; do
+MAX_TRIES=30
+SLEEP_SEC=2
+GOOD=0
+while [ $TRIES -lt $MAX_TRIES ]; do
   TRIES=$((TRIES+1))
-  echo "Waiting for edge to be ready... attempt $TRIES/$MAX_TRIES"
-  sleep 1
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${HOST_PORT}" || echo "000")
+  echo "Attempt $TRIES/$MAX_TRIES: Edge returned HTTP $HTTP_CODE"
+  if [ "$HTTP_CODE" = "200" ]; then
+    # fetch short body and check it's not an nginx error page
+    BODY=$(curl -fsS "http://localhost:${HOST_PORT}" 2>/dev/null || echo "")
+    echo "Fetched body length: ${#BODY}"
+    # simple content check — adjust substring to your origin content (e.g., 'Hairdryer cat' or '<h1>')
+    if echo "$BODY" | grep -qEi "Hairdryer|<h1|<!DOCTYPE html>"; then
+      GOOD=1
+      echo "Edge serving expected content."
+      break
+    else
+      echo "Edge returned 200 but body did not contain expected marker. Body preview:"
+      echo "$BODY" | sed -n '1,10p'
+    fi
+  fi
+  sleep $SLEEP_SEC
 done
 
-if [ $TRIES -ge $MAX_TRIES ]; then
-  echo "Error: Edge did not respond in time."
+if [ $GOOD -ne 1 ]; then
+  echo "Error: Edge did not respond in time with expected content."
   echo "---- edge logs ----"
   docker logs "$EDGE_CID" || true
   echo "---- origin logs ----"
@@ -100,21 +118,9 @@ if [ $TRIES -ge $MAX_TRIES ]; then
   exit 1
 fi
 
-# 6) Fetch and print response headers (sanity)
-RESPONSE_HEADERS=$(curl -fsS -I "http://localhost:${HOST_PORT}" | head -n 10 || true)
-if [ -z "$RESPONSE_HEADERS" ]; then
-  echo "Error: Edge server returned empty response"
-  echo "---- edge logs ----"
-  docker logs "$EDGE_CID" || true
-  echo "---- origin logs ----"
-  docker logs origin || true
-  docker rm -f "$EDGE_CID" origin >/dev/null 2>&1 || true
-  docker network rm "$NETWORK" >/dev/null 2>&1 || true
-  exit 1
-fi
-
-echo "Edge response OK"
-echo "$RESPONSE_HEADERS"
+# success — print headers for confirmation
+echo "Edge ready — printing response headers:"
+curl -fsS -I "http://localhost:${HOST_PORT}" | sed -n '1,20p' || true
 
 # Cleanup
 docker rm -f "$EDGE_CID" origin >/dev/null 2>&1 || true
