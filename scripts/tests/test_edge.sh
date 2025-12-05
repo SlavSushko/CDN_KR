@@ -19,6 +19,7 @@ ORIGIN_IMAGE="origin-img:latest"
 # стартуем origin в той же сети
 CID_ORIGIN=$(docker run -d \
   --network $NET \
+  --network-alias origin_backend \
   --name test-origin \
   -p 0:80 \
   "$ORIGIN_IMAGE")
