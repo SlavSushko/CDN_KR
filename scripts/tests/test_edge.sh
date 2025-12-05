@@ -1,129 +1,111 @@
 #!/bin/sh
-set -eu
+set -e
 
-EDGE_IMAGE="$1"
-if [ -z "$EDGE_IMAGE" ]; then
-  echo "Error: Edge image required as argument"
+IMAGE="$1"
+if [ -z "$IMAGE" ]; then
+  echo "Error: Edge image name required as argument"
   exit 1
 fi
 
-echo "[TEST] Edge server with $EDGE_IMAGE"
+echo "[TEST] Edge server with $IMAGE"
 
-NETWORK="cdn-test-net"
+# Create a temp docker network
+NET="cdn-test-net"
+docker network create $NET >/dev/null 2>&1 || true
 
-# create network if missing
-docker network create "$NETWORK" >/dev/null 2>&1 || true
-
-# ensure no leftover container named 'origin'
-docker rm -f origin >/dev/null 2>&1 || true
-
-# 1) Start origin with name 'origin' in the test network
 echo "Starting test origin (name='origin')..."
-ORIGIN_CID=$(docker run -d --network "$NETWORK" --name origin origin-img:latest)
-if [ -z "$ORIGIN_CID" ]; then
-  echo "Error: Unable to start origin container"
+
+ORIGIN_IMAGE="origin-img:latest"
+# стартуем origin в той же сети
+CID_ORIGIN=$(docker run -d \
+  --network $NET \
+  --name test-origin \
+  -p 0:80 \
+  "$ORIGIN_IMAGE")
+
+if [ -z "$CID_ORIGIN" ]; then
+  echo "Error: Could not start origin container"
   exit 1
 fi
-echo "Origin container id: $ORIGIN_CID"
 
-# Wait until origin responds on its internal port 80
-TRIES=0
-MAX_TRIES=15
-until docker exec origin sh -c "curl -sS --fail http://localhost:80 >/dev/null 2>&1" || [ $TRIES -ge $MAX_TRIES ]; do
-  TRIES=$((TRIES+1))
-  echo "Waiting for origin to be ready... attempt $TRIES/$MAX_TRIES"
-  sleep 1
-done
+echo "Origin container id: $CID_ORIGIN"
 
-if [ $TRIES -ge $MAX_TRIES ]; then
-  echo "Error: origin did not become ready in time"
-  echo "---- origin logs ----"
-  docker logs origin || true
-  docker rm -f origin >/dev/null 2>&1 || true
-  docker network rm "$NETWORK" >/dev/null 2>&1 || true
+# даём origin подняться
+sleep 2
+
+# достаём порт origin
+ORIGIN_PORT=$(docker inspect --format '{{ (index (index .NetworkSettings.Ports "80/tcp") 0).HostPort }}' "$CID_ORIGIN")
+
+if [ -z "$ORIGIN_PORT" ]; then
+  echo "Error: Could not get origin port"
+  docker logs "$CID_ORIGIN"
   exit 1
 fi
+
 echo "Origin is ready."
 
-# 2) Start edge in same network and publish a random host port
-EDGE_CID=$(docker run -d --network "$NETWORK" -p 0:80 "$EDGE_IMAGE")
-if [ -z "$EDGE_CID" ]; then
-  echo "Error: Unable to start edge container"
-  docker rm -f origin >/dev/null 2>&1 || true
-  docker network rm "$NETWORK" >/dev/null 2>&1 || true
+###############################################################
+# START EDGE
+###############################################################
+
+CID_EDGE=$(docker run -d \
+  --network $NET \
+  --name test-edge \
+  -p 0:80 \
+  "$IMAGE")
+
+if [ -z "$CID_EDGE" ]; then
+  echo "Error: Could not start edge container"
+  docker rm -f "$CID_ORIGIN" >/dev/null 2>&1 || true
   exit 1
 fi
-echo "Edge container id: $EDGE_CID"
 
-# 3) Detect mapped host port for edge (retry)
-TRY=0
-HOST_PORT=""
-while [ $TRY -lt 10 ]; do
-  HOST_PORT=$(docker port "$EDGE_CID" 80 | sed -n 's/.*:\([0-9]*\)$/\1/p' || true)
-  if [ -n "$HOST_PORT" ]; then
-    break
+echo "Edge container id: $CID_EDGE"
+
+# получаем порт edge
+EDGE_PORT=$(docker inspect --format '{{ (index (index .NetworkSettings.Ports "80/tcp") 0).HostPort }}' "$CID_EDGE")
+
+if [ -z "$EDGE_PORT" ]; then
+  echo "Error: Could not detect mapped port for Edge container"
+  docker logs "$CID_EDGE" || true
+  exit 1
+fi
+
+echo "Edge mapped to host port: $EDGE_PORT"
+echo "$EDGE_PORT"
+
+###############################################################
+# WAIT FOR EDGE READINESS
+###############################################################
+
+EXPECTED="X-Proxy-Cache"
+
+for i in $(seq 1 30); do
+  RES=$(curl -s -I "http://localhost:${EDGE_PORT}" || true)
+
+  CODE=$(echo "$RES" | head -n1 | awk '{print $2}')
+
+  if [ "$CODE" = "200" ]; then
+    echo "Edge responded with 200 OK at attempt $i"
+    echo "$RES"
+    docker rm -f "$CID_EDGE" "$CID_ORIGIN" >/dev/null 2>&1 || true
+    exit 0
   fi
-  TRY=$((TRY+1))
-  echo "Waiting for host port mapping... attempt $TRY/10"
-  sleep 1
+
+  echo "Attempt $i/30: Edge returned HTTP ${CODE:-000000}"
+  sleep 2
 done
 
-if [ -z "$HOST_PORT" ]; then
-  echo "Error: Could not detect mapped port for Edge container."
-  echo "---- edge logs ----"
-  docker logs "$EDGE_CID" || true
-  echo "---- origin logs ----"
-  docker logs origin || true
-  docker rm -f "$EDGE_CID" origin >/dev/null 2>&1 || true
-  docker network rm "$NETWORK" >/dev/null 2>&1 || true
-  exit 1
-fi
+###############################################################
+# FAILURE
+###############################################################
 
-echo "Edge mapped to host port: $HOST_PORT"
+echo "Error: Edge did not respond in time with expected content."
+echo "---- edge logs ----"
+docker logs "$CID_EDGE" || true
 
-# 4) Wait for edge to become ready — more tolerant loop with logging
-TRIES=0
-MAX_TRIES=30
-SLEEP_SEC=2
-GOOD=0
-while [ $TRIES -lt $MAX_TRIES ]; do
-  TRIES=$((TRIES+1))
-  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${HOST_PORT}" || echo "000")
-  echo "Attempt $TRIES/$MAX_TRIES: Edge returned HTTP $HTTP_CODE"
-  if [ "$HTTP_CODE" = "200" ]; then
-    # fetch short body and check it's not an nginx error page
-    BODY=$(curl -fsS "http://localhost:${HOST_PORT}" 2>/dev/null || echo "")
-    echo "Fetched body length: ${#BODY}"
-    # simple content check — adjust substring to your origin content (e.g., 'Hairdryer cat' or '<h1>')
-    if echo "$BODY" | grep -qEi "Hairdryer|<h1|<!DOCTYPE html>"; then
-      GOOD=1
-      echo "Edge serving expected content."
-      break
-    else
-      echo "Edge returned 200 but body did not contain expected marker. Body preview:"
-      echo "$BODY" | sed -n '1,10p'
-    fi
-  fi
-  sleep $SLEEP_SEC
-done
+echo "---- origin logs ----"
+docker logs "$CID_ORIGIN" || true
 
-if [ $GOOD -ne 1 ]; then
-  echo "Error: Edge did not respond in time with expected content."
-  echo "---- edge logs ----"
-  docker logs "$EDGE_CID" || true
-  echo "---- origin logs ----"
-  docker logs origin || true
-  docker rm -f "$EDGE_CID" origin >/dev/null 2>&1 || true
-  docker network rm "$NETWORK" >/dev/null 2>&1 || true
-  exit 1
-fi
-
-# success — print headers for confirmation
-echo "Edge ready — printing response headers:"
-curl -fsS -I "http://localhost:${HOST_PORT}" | sed -n '1,20p' || true
-
-# Cleanup
-docker rm -f "$EDGE_CID" origin >/dev/null 2>&1 || true
-docker network rm "$NETWORK" >/dev/null 2>&1 || true
-
-exit 0
+docker rm -f "$CID_EDGE" "$CID_ORIGIN" >/dev/null 2>&1 || true
+exit 1
