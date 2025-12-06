@@ -10,8 +10,7 @@ configs:
 
 services:
   origin:
-    image: image: ${DOCKERHUB_REPO_ORIGIN}:latest
-   # <-- обновлено
+    image: ${DOCKERHUB_REPO_ORIGIN}:latest
     deploy:
       replicas: 1
       restart_policy:
@@ -25,7 +24,7 @@ services:
       - cdn-net
 
   edge1:
-    image: slavsushko/cdn-edge:latest     # <-- обновлено
+    image: slavsushko/cdn-edge:latest
     deploy:
       replicas: 1
       restart_policy:
@@ -39,7 +38,7 @@ services:
       - cdn-net
 
   edge2:
-    image: slavsushko/cdn-edge:latest     # <-- обновлено
+    image: slavsushko/cdn-edge:latest
     deploy:
       replicas: 1
       restart_policy:
@@ -75,8 +74,8 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
     command:
-      - '--path.procfs=/host/proc'
-      - '--path.sysfs=/host/sys'
+      - --path.procfs=/host/proc
+      - --path.sysfs=/host/sys
     networks:
       - cdn-net
 
