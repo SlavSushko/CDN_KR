@@ -9,17 +9,24 @@ fi
 
 echo "[TEST] Edge server with $IMAGE"
 
-# Create a temp docker network
+###############################################################
+# CREATE NETWORK
+###############################################################
+
 NET="cdn-test-net"
 docker network create $NET >/dev/null 2>&1 || true
 
-echo "Starting test origin (name='origin')..."
+###############################################################
+# START ORIGIN
+###############################################################
+
+echo "Starting test origin (alias='origin')..."
 
 ORIGIN_IMAGE="origin-img:latest"
-# стартуем origin в той же сети
+
 CID_ORIGIN=$(docker run -d \
   --network $NET \
-  --network-alias origin_backend \
+  --network-alias origin \
   --name test-origin \
   -p 0:80 \
   "$ORIGIN_IMAGE")
@@ -31,10 +38,9 @@ fi
 
 echo "Origin container id: $CID_ORIGIN"
 
-# даём origin подняться
+# wait for origin
 sleep 2
 
-# достаём порт origin
 ORIGIN_PORT=$(docker inspect --format '{{ (index (index .NetworkSettings.Ports "80/tcp") 0).HostPort }}' "$CID_ORIGIN")
 
 if [ -z "$ORIGIN_PORT" ]; then
@@ -43,15 +49,18 @@ if [ -z "$ORIGIN_PORT" ]; then
   exit 1
 fi
 
-echo "Origin is ready."
+echo "Origin is ready on port $ORIGIN_PORT"
 
 ###############################################################
 # START EDGE
 ###############################################################
 
+echo "Starting edge and pointing it to origin..."
+
 CID_EDGE=$(docker run -d \
   --network $NET \
   --name test-edge \
+  -e ORIGIN_HOST="origin:80" \
   -p 0:80 \
   "$IMAGE")
 
@@ -63,32 +72,29 @@ fi
 
 echo "Edge container id: $CID_EDGE"
 
-# получаем порт edge
 EDGE_PORT=$(docker inspect --format '{{ (index (index .NetworkSettings.Ports "80/tcp") 0).HostPort }}' "$CID_EDGE")
 
 if [ -z "$EDGE_PORT" ]; then
-  echo "Error: Could not detect mapped port for Edge container"
-  docker logs "$CID_EDGE" || true
+  echo "Error: Could not detect mapped edge port"
+  docker logs "$CID_EDGE"
   exit 1
 fi
 
-echo "Edge mapped to host port: $EDGE_PORT"
+echo "Edge mapped to port: $EDGE_PORT"
 echo "$EDGE_PORT"
 
 ###############################################################
-# WAIT FOR EDGE READINESS
+# WAIT FOR SUCCESSFUL RESPONSE
 ###############################################################
-
-EXPECTED="X-Proxy-Cache"
 
 for i in $(seq 1 30); do
   RES=$(curl -s -I "http://localhost:${EDGE_PORT}" || true)
-
   CODE=$(echo "$RES" | head -n1 | awk '{print $2}')
 
   if [ "$CODE" = "200" ]; then
     echo "Edge responded with 200 OK at attempt $i"
     echo "$RES"
+
     docker rm -f "$CID_EDGE" "$CID_ORIGIN" >/dev/null 2>&1 || true
     exit 0
   fi
