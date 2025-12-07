@@ -81,7 +81,8 @@ services:
       - cdn-net
 
   swarm-exporter:
-    image: dockerswarmexporter/dockerswarm-exporter:latest
+    image: stevenengler/docker-swarm-exporter:latest
+
     deploy:
       mode: global
       restart_policy:
