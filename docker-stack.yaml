@@ -10,7 +10,7 @@ configs:
 
 services:
   origin:
-    image: image: ${DOCKERHUB_REPO_ORIGIN}:latest
+    image: ${DOCKERHUB_REPO_ORIGIN}:latest
    # <-- обновлено
     deploy:
       replicas: 1
